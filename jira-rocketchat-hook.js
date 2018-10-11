@@ -60,6 +60,11 @@ class Script {
 					let action = comment.created !== comment.updated ? 'Updated comment' : 'Commented';
 					message.attachments.push(prepareAttachment(data, `*${action}* on ${issueSummary}:\n${stripDesc(comment.body)}`));
 				}
+				
+			} 
+			//SLA event from service desk automation rule has been added 
+			else { 
+				message.attachments.push(prepareAttachment(data, `*SLA 1 hour* ${issueSummary}:\n${stripDesc(issue.fields.description)}`));
 			}
 
 			if (message.text || message.attachments.length) {
