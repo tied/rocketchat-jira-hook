@@ -5,9 +5,9 @@ function stripDesc(str) {
 	return (str && str.length > DESC_MAX_LENGTH) ? str.slice(0, DESC_MAX_LENGTH - 3) + '...' : str;
 }
 
-function prepareAttachment({issue, user}, text) {
-	let issueType = issue.fields.issuetype;
-	let res = {
+function prepareAttachment({issue, user}, text) { //handler for standart webhooks
+	var issueType = issue.fields.issuetype;
+	var res = {
 		author_name: user.displayName
 		, author_icon: user.avatarUrls['24x24']
 		, thumb_url: issueType.iconUrl
@@ -22,26 +22,37 @@ class Script {
 	process_incoming_request({request}) {
 		const data = request.content;
 		try {
-			if (!data.issue || (data.user && data.user.name === 'gitlab')) {
-				return;
-			}
-			let issue = data.issue;
-			let baseJiraUrl = issue.self.replace(/\/rest\/.*$/, '');
-			let user = data.user;
-			let assignedTo = (issue.fields.assignee && issue.fields.assignee.name !== user.name) ? `, assigned to ${issue.fields.assignee.displayName}` : '';
-			let issueSummary = `[${issue.key}](${baseJiraUrl}/browse/${issue.key}) ${issue.fields.summary} _(${issue.fields.priority.name.replace(/^\s*\d*\.\s*/, '')}${assignedTo})_`;
-			let message = {
+			if (data.issue) { //standart jira webhook
+				var issue = data.issue;
+				var baseJiraUrl = issue.self.replace(/\/rest\/.*$/, '');
+				var user = data.user;
+				var assignedTo = (issue.fields.assigned && issue.fields.assigned.name !== user.name) ? `, assigned to ${issue.fields.assigned.name}` : '';
+				var issueSummary = `[${issue.key}](${baseJiraUrl}/browse/${issue.key}) ${issue.fields.summary} _(${issue.fields.priority.name.replace(/^\s*\d*\.\s*/, '')}${assignedTo})_`;
+				var message = {
 				icon_url: (issue.fields.project && issue.fields.project.avatarUrls && issue.fields.project.avatarUrls['48x48']) || JIRA_LOGO
+				, attachments: []			};
+				
+			} else{ //"automation for jira" webhook
+				var issue = data;
+				var baseJiraUrl = data.self.replace(/\/rest\/.*$/, '');
+				var assignedTo = (data.fields.assigned && data.fields.assigned.name !== user.name) ? `, assigned to ${data.fields.assigned.name}` : '';
+				var issueSummary = `[${data.key}](${baseJiraUrl}/browse/${data.key}) ${data.fields.summary} _(${data.fields.priority.name.replace(/^\s*\d*\.\s*/, '')}${assignedTo})_`;
+				var message = {
+				icon_url: (data.fields.project && data.fields.project.avatarUrls && data.fields.project.avatarUrls['48x48']) || JIRA_LOGO
 				, attachments: []
+				
+			}
+			
 			};
 
 			if (data.webhookEvent === 'jira:issue_created') {
 				message.attachments.push(prepareAttachment(data, `*Created* ${issueSummary}:\n${stripDesc(issue.fields.description)}`));
 			} else if (data.webhookEvent === 'jira:issue_deleted') {
 				message.attachments.push(prepareAttachment(data, `*Deleted* ${issueSummary}`));
-			} else if (data.webhookEvent === 'jira:issue_updated') {
+			} else 
+				if (data.webhookEvent === 'jira:issue_updated') {
 				if (data.changelog && data.changelog.items) { // field update
-					let logs = [];
+					var logs = [];
 					data.changelog.items.forEach((change) => {
 						if (!change.field.match('status|resolution|comment|priority') ) {
 							return;
@@ -56,17 +67,23 @@ class Script {
 				}
 
 				if (data.comment) { // comment update
-					let comment = data.comment;
-					let action = comment.created !== comment.updated ? 'Updated comment' : 'Commented';
+					var comment = data.comment;
+					var action = comment.created !== comment.updated ? 'Updated comment' : 'Commented';
 					message.attachments.push(prepareAttachment(data, `*${action}* on ${issueSummary}:\n${stripDesc(comment.body)}`));
 				}
-				
-			} 
-			//SLA event from service desk automation rule has been added 
-			else { 
-				message.attachments.push(prepareAttachment(data, `*SLA 1 hour* ${issueSummary}:\n${stripDesc(issue.fields.description)}`));
 			}
-
+			  else { //handler for custom webhooks data
+					var issueType = data.fields.issuetype;
+					var res = {
+					thumb_url: issueType.iconUrl};
+					var text = `*SLA Alert* ${issueSummary}:\n${stripDesc(data.fields.description)}`;
+					if (text) {
+						text = text.replace(/\{\{(user|issue)\.([^a-z_0-9]+)\}\}/g, (m, type, key) => (type==='user' ? user : issue)[key]);
+						res.text = text;
+								}
+					message.attachments.push(res);			  	 
+			  }	
+			
 			if (message.text || message.attachments.length) {
 				return {content:message};
 			}
